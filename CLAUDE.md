@@ -58,7 +58,7 @@ Never publish to Kafka directly from business code. Always go through the outbox
 - PostgreSQL 16 (one instance per service).
 - Apache Kafka + Zookeeper (single broker, local only).
 - Docker Compose for the whole local stack.
-- Maven multi-module or independent Gradle projects — pick one and stay consistent.
+- **Gradle** (Kotlin DSL, `build.gradle.kts`) per service. Always use the wrapper (`./gradlew`) — system Gradle is 7.5.1 and won't work with Java 21.
 
 ## Project layout (target)
 
@@ -72,7 +72,7 @@ architect-training/
 └── common/                 # shared event DTOs, base outbox entity (optional)
 ```
 
-Each service is independently runnable (`mvn spring-boot:run`) and has its own `application.yml`, migrations, and Dockerfile.
+Each service is independently runnable (`./gradlew bootRun`) and has its own `application.yml`, migrations, and Dockerfile.
 
 ## REST endpoints (minimum to demo the flow)
 
