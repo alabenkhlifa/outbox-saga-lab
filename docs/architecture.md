@@ -277,3 +277,56 @@ Kafka exposed on `localhost:9092`.
 ### No shared library
 
 Each service owns its own copy of event DTOs. This matches real-world microservices where services evolve schemas independently. Schema drift is acceptable — the JSON envelope is the contract.
+
+---
+
+## 6. Local stack & chaos topology
+
+The operational layer that lives alongside the four services in `docker-compose.yml`. Toxiproxy sits in front of Kafka so that failure injection is a one-liner, and Kafka UI gives a visual of topics, messages, and consumer lag.
+
+```mermaid
+flowchart LR
+    k6[k6 traffic-sim<br/>diurnal · burst · hotSku]
+    curl[curl / GET /orders/id]
+
+    subgraph hostside["Host (your laptop)"]
+        Order[order-service<br/>:8080]
+        Payment[payment-service<br/>:8081]
+        Inventory[inventory-service<br/>:8082]
+        Delivery[delivery-service<br/>:8083]
+    end
+
+    subgraph compose["docker compose network"]
+        Toxiproxy{{toxiproxy<br/>:9092 host<br/>:8474 admin}}
+        Kafka{{kafka<br/>internal :29092}}
+        KafkaUI[kafka-ui<br/>:8090]
+        Postgres[(orders / payments<br/>inventory / delivery DBs)]
+    end
+
+    chaos[tools/chaos.sh<br/>latency · down · clear]
+
+    k6 -->|POST /orders| Order
+    curl --> Order
+
+    Order  -->|kafka producer/consumer<br/>localhost:9092| Toxiproxy
+    Payment -->|same| Toxiproxy
+    Inventory -->|same| Toxiproxy
+    Delivery  -->|same| Toxiproxy
+
+    Toxiproxy -->|kafka:9092| Kafka
+    KafkaUI -->|kafka:29092<br/>direct, in-network| Kafka
+
+    Order  --> Postgres
+    Payment --> Postgres
+    Inventory --> Postgres
+    Delivery --> Postgres
+
+    chaos -.->|HTTP API :8474| Toxiproxy
+
+    classDef chaosClass fill:#ffe5e5,stroke:#cc4444
+    class chaos,Toxiproxy chaosClass
+```
+
+**Why toxiproxy is always in the host→Kafka path:** Kafka brokers send their own listener address to clients in metadata. If the proxy were optional and not advertised, clients would reconnect directly to Kafka after the first metadata refresh and bypass any toxics. Putting toxiproxy on `localhost:9092` (the address Kafka advertises for `PLAINTEXT_HOST`) means every reconnect comes back through the proxy, so chaos effects stick.
+
+**Default state**: zero toxics — proxy is fully transparent, near-zero added latency. Chaos is opt-in via `./tools/chaos.sh`.
