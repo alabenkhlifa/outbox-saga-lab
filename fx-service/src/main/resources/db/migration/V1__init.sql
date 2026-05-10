@@ -1,16 +1,16 @@
 -- fx-service initial schema
 
 CREATE TABLE fx_rate (
-    base_currency   CHAR(3)         NOT NULL,
-    quote_currency  CHAR(3)         NOT NULL,
+    base_currency   VARCHAR(3)         NOT NULL,
+    quote_currency  VARCHAR(3)         NOT NULL,
     rate            NUMERIC(19, 8)  NOT NULL,
     PRIMARY KEY (base_currency, quote_currency)
 );
 
 CREATE TABLE fx_trade (
     id              UUID            PRIMARY KEY,
-    base_currency   CHAR(3)         NOT NULL,
-    quote_currency  CHAR(3)         NOT NULL,
+    base_currency   VARCHAR(3)         NOT NULL,
+    quote_currency  VARCHAR(3)         NOT NULL,
     base_amount     NUMERIC(19, 4)  NOT NULL,
     quote_amount    NUMERIC(19, 4)  NOT NULL,
     rate            NUMERIC(19, 8)  NOT NULL,

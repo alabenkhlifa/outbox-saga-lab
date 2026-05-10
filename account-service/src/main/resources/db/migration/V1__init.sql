@@ -3,7 +3,7 @@
 CREATE TABLE wallet (
     id          UUID            PRIMARY KEY,
     user_id     VARCHAR(64)     NOT NULL,
-    currency    CHAR(3)         NOT NULL,
+    currency    VARCHAR(3)         NOT NULL,
     balance     NUMERIC(19, 4)  NOT NULL,
     version     BIGINT          NOT NULL DEFAULT 0,
     UNIQUE (user_id, currency)

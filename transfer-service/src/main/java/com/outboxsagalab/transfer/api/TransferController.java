@@ -51,7 +51,13 @@ public class TransferController {
                 req.senderUser(), req.senderCurrency(),
                 req.recipientUser(), req.recipientCurrency(),
                 req.sourceAmount());
-        transfers.save(t);
+        // Reassign the returned reference: JpaRepository.save() calls merge() for entities
+        // whose @Id is non-null at construction (Transfer's UUID is set in the constructor and
+        // there's no @Version), so it returns a managed copy and detaches the original. Without
+        // this, the transitionTo(DEBIT_REQUESTED) below would mutate a detached entity and the
+        // change would never be flushed — the saga would later see PENDING and reject the
+        // AccountDebited reply.
+        t = transfers.save(t);
         log.info("Transfer created saga_id={} {}->{} {}->{} amount={}",
                 id, req.senderUser(), req.recipientUser(),
                 req.senderCurrency(), req.recipientCurrency(), req.sourceAmount());

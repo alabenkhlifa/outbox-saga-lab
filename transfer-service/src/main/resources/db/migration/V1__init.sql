@@ -5,9 +5,9 @@
 CREATE TABLE transfer (
     id                  UUID            PRIMARY KEY,
     sender_user         VARCHAR(64)     NOT NULL,
-    sender_currency     CHAR(3)         NOT NULL,
+    sender_currency     VARCHAR(3)         NOT NULL,
     recipient_user      VARCHAR(64)     NOT NULL,
-    recipient_currency  CHAR(3)         NOT NULL,
+    recipient_currency  VARCHAR(3)         NOT NULL,
     source_amount       NUMERIC(19, 4)  NOT NULL,
     target_amount       NUMERIC(19, 4),
     rate                NUMERIC(19, 8),
