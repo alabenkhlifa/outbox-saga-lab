@@ -26,7 +26,7 @@ import java.util.UUID;
  *
  * The POST is the one domain write that doesn't go through the saga itself --
  * it persists the transfer + writes the first DebitAccount outbox row in a
- * single transaction, mirroring how the original order-service kicked off.
+ * single transaction, mirroring the same outbox-first bootstrap used by every service in this lab.
  */
 @RestController
 @RequestMapping("/transfers")

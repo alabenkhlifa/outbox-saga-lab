@@ -3,7 +3,6 @@ package com.outboxsagalab.transfer.outbox;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.outboxsagalab.transfer.messaging.EventEnvelope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
@@ -26,7 +25,7 @@ import java.util.concurrent.TimeoutException;
  *
  * Algorithm:
  *   1. SELECT oldest N unpublished rows
- *   2. For each row: build the {@link EventEnvelope} JSON, publish to Kafka,
+ *   2. For each row: build the envelope JSON, publish to Kafka,
  *      block on the future so a failure throws.
  *   3. Mark each row published_at = now().
  *
