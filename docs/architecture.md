@@ -2,244 +2,182 @@
 
 Living design doc for `outbox-saga-lab`. All four services and the subagents scaffolding them must follow the conventions in this file.
 
----
-
-## 1. System architecture
+## 1. System overview
 
 ```mermaid
 flowchart LR
-    Client([REST Client])
-
-    subgraph orderSvc["order-service (saga orchestrator)"]
-        OrderApp[Spring Boot]
-        OrderDB[(orders<br/>:5432)]
-        OrderApp --- OrderDB
+    subgraph orchestrator["transfer-service (saga orchestrator)"]
+        TR[Transfer]
     end
 
-    subgraph paymentSvc["payment-service"]
-        PaymentApp[Spring Boot]
-        PaymentDB[(payments<br/>:5433)]
-        PaymentApp --- PaymentDB
+    subgraph participants
+        AC[account-service<br/>wallets]
+        FX[fx-service<br/>rates + trades]
+        NT[notification-service<br/>notifications]
     end
 
-    subgraph inventorySvc["inventory-service"]
-        InventoryApp[Spring Boot]
-        InventoryDB[(inventory<br/>:5434)]
-        InventoryApp --- InventoryDB
+    subgraph kafka["Kafka (via Toxiproxy)"]
+        AC_C[account.commands]
+        AC_E[account.events]
+        FX_C[fx.commands]
+        FX_E[fx.events]
+        NT_C[notification.commands]
+        NT_E[notification.events]
     end
 
-    subgraph deliverySvc["delivery-service"]
-        DeliveryApp[Spring Boot]
-        DeliveryDB[(delivery<br/>:5435)]
-        DeliveryApp --- DeliveryDB
-    end
-
-    Kafka{{Kafka<br/>:9092}}
-
-    Client -->|POST /orders| OrderApp
-
-    OrderApp -- "payment-commands" --> Kafka
-    OrderApp -- "inventory-commands" --> Kafka
-    OrderApp -- "delivery-commands" --> Kafka
-
-    Kafka -- "payment-events" --> OrderApp
-    Kafka -- "inventory-events" --> OrderApp
-    Kafka -- "delivery-events" --> OrderApp
-
-    Kafka -- "payment-commands" --> PaymentApp
-    PaymentApp -- "payment-events" --> Kafka
-
-    Kafka -- "inventory-commands" --> InventoryApp
-    InventoryApp -- "inventory-events" --> Kafka
-
-    Kafka -- "delivery-commands" --> DeliveryApp
-    DeliveryApp -- "delivery-events" --> Kafka
+    TR -- DebitAccount/CreditAccount/RefundAccount --> AC_C --> AC
+    AC -- AccountDebited/Credited/Rejected/Refunded --> AC_E --> TR
+    TR -- ConvertCurrency/ReverseConversion --> FX_C --> FX
+    FX -- CurrencyConverted/Rejected/Reversed --> FX_E --> TR
+    TR -- SendNotification --> NT_C --> NT
+    NT -- NotificationSent --> NT_E --> TR
 ```
-
-**Topology**: Order Service is the only orchestrator. It sends commands and reacts to events. The three participants only know their own command/event topics.
-
----
 
 ## 2. Saga happy path
 
 ```mermaid
 sequenceDiagram
-    actor Client
-    participant Order as order-service
-    participant K as Kafka
-    participant Pay as payment-service
-    participant Inv as inventory-service
-    participant Del as delivery-service
+    autonumber
+    participant Client
+    participant Transfer as transfer-service
+    participant Account as account-service
+    participant Fx as fx-service
+    participant Notif as notification-service
 
-    Client->>Order: POST /orders
-    Note over Order: TX: save order(PENDING)<br/>+ outbox: RequestPayment
-    Order-->>Client: 201 Created
+    Client->>Transfer: POST /transfers
+    Note over Transfer: state PENDING -> DEBIT_REQUESTED<br/>(persists Transfer + DebitAccount outbox row, same TX)
 
-    Order->>K: payment-commands: RequestPayment
-    K->>Pay: RequestPayment
-    Note over Pay: TX: charge<br/>+ outbox: PaymentApproved
-    Pay->>K: payment-events: PaymentApproved
-    K->>Order: PaymentApproved
+    Transfer-)Account: DebitAccount (account.commands)
+    Note over Account: debits sender wallet,<br/>writes wallet_movement row
+    Account-)Transfer: AccountDebited (account.events)
 
-    Note over Order: TX: order(PAID)<br/>+ outbox: ReserveStock
-    Order->>K: inventory-commands: ReserveStock
-    K->>Inv: ReserveStock
-    Note over Inv: TX: reserve<br/>+ outbox: StockReserved
-    Inv->>K: inventory-events: StockReserved
-    K->>Order: StockReserved
+    Note over Transfer: state DEBIT_REQUESTED -> SENDER_DEBITED -> FX_REQUESTED
+    Transfer-)Fx: ConvertCurrency (fx.commands)
+    Note over Fx: looks up seeded rate,<br/>writes fx_trade EXECUTED row
+    Fx-)Transfer: CurrencyConverted (fx.events)
 
-    Note over Order: TX: order(RESERVED)<br/>+ outbox: ScheduleDelivery
-    Order->>K: delivery-commands: ScheduleDelivery
-    K->>Del: ScheduleDelivery
-    Note over Del: TX: schedule<br/>+ outbox: DeliveryScheduled
-    Del->>K: delivery-events: DeliveryScheduled
-    K->>Order: DeliveryScheduled
+    Note over Transfer: records target_amount + rate,<br/>state FX_REQUESTED -> FX_CONVERTED -> CREDIT_REQUESTED
+    Transfer-)Account: CreditAccount (account.commands)
+    Note over Account: credits recipient wallet
+    Account-)Transfer: AccountCredited (account.events)
 
-    Note over Order: TX: order(COMPLETED)
+    Note over Transfer: state CREDIT_REQUESTED -> RECIPIENT_CREDITED -> NOTIFICATION_REQUESTED
+    Transfer-)Notif: SendNotification (notification.commands)
+    Note over Notif: writes one TRANSFER_SENT row<br/>+ one TRANSFER_RECEIVED row
+    Notif-)Transfer: NotificationSent (notification.events)
+
+    Note over Transfer: state NOTIFICATION_REQUESTED -> COMPLETED
 ```
 
----
-
-## 3. Compensation flow (failure at any step)
+## 3. Compensation flow
 
 ```mermaid
 sequenceDiagram
-    participant Order as order-service
-    participant Pay as payment-service
-    participant Inv as inventory-service
-    participant Del as delivery-service
+    autonumber
+    participant Transfer as transfer-service
+    participant Account as account-service
+    participant Fx as fx-service
 
-    Note over Order,Del: Three failure scenarios, all compensate in reverse order
+    Note over Transfer,Fx: Three failure scenarios, all compensate in reverse order
 
-    rect rgb(255, 240, 240)
-        Note over Pay: Payment fails
-        Pay->>Order: PaymentDeclined
-        Note over Order: order(FAILED) — nothing to compensate
+    rect rgba(255,200,200,0.3)
+        Note over Transfer,Account: Failure A — debit rejected (insufficient funds)
+        Transfer-)Account: DebitAccount
+        Account-)Transfer: DebitRejected
+        Note over Transfer: state -> FAILED (nothing to compensate)
     end
 
-    rect rgb(255, 240, 240)
-        Note over Inv: Inventory fails (after payment)
-        Inv->>Order: StockReservationFailed
-        Order->>Pay: RefundPayment
-        Pay->>Order: PaymentRefunded
-        Note over Order: order(FAILED)
+    rect rgba(255,210,150,0.3)
+        Note over Transfer,Fx: Failure B — conversion rejected
+        Transfer-)Account: DebitAccount
+        Account-)Transfer: AccountDebited
+        Transfer-)Fx: ConvertCurrency
+        Fx-)Transfer: ConversionRejected
+        Note over Transfer: state -> COMPENSATING
+        Transfer-)Account: RefundAccount
+        Account-)Transfer: DebitRefunded
+        Note over Transfer: state -> FAILED
     end
 
-    rect rgb(255, 240, 240)
-        Note over Del: Delivery fails (after payment + inventory)
-        Del->>Order: DeliveryFailed
-        Order->>Inv: ReleaseStock
-        Inv->>Order: StockReleased
-        Order->>Pay: RefundPayment
-        Pay->>Order: PaymentRefunded
-        Note over Order: order(FAILED)
+    rect rgba(255,150,150,0.3)
+        Note over Transfer,Fx: Failure C — credit rejected (recipient wallet missing)
+        Transfer-)Account: DebitAccount
+        Account-)Transfer: AccountDebited
+        Transfer-)Fx: ConvertCurrency
+        Fx-)Transfer: CurrencyConverted
+        Transfer-)Account: CreditAccount
+        Account-)Transfer: CreditRejected
+        Note over Transfer: state -> COMPENSATING
+        Transfer-)Fx: ReverseConversion
+        Fx-)Transfer: FxReversed
+        Transfer-)Account: RefundAccount
+        Account-)Transfer: DebitRefunded
+        Note over Transfer: state -> FAILED
     end
 ```
 
----
-
-## 4. Outbox + idempotency (per-service internals)
+## 4. Idempotency check
 
 ```mermaid
-flowchart TB
-    KafkaIn[(Kafka<br/>command topic)]
-    KafkaOut[(Kafka<br/>event topic)]
-
-    subgraph svc["A participant service"]
-        direction TB
-
-        subgraph t1["TX 1: handle incoming command"]
-            direction TB
-            Consumer[Kafka Consumer]
-            Check{event_id in<br/>processed_events?}
-            Skip[Skip — already processed]
-            Domain[Domain logic]
-            ProcInsert[INSERT processed_events<br/>event_id, processed_at]
-            DomainWrite[UPDATE / INSERT<br/>domain table]
-            OutboxInsert[INSERT outbox<br/>event_id, payload]
-        end
-
-        subgraph t2["Background: outbox poller (every 1s)"]
-            direction TB
-            Poller[Scheduled @1s]
-            Read[SELECT FROM outbox<br/>WHERE published_at IS NULL<br/>LIMIT N]
-            Pub[Kafka Producer]
-            Mark[UPDATE outbox<br/>SET published_at = now]
-        end
-
-        Consumer --> Check
-        Check -- already seen --> Skip
-        Check -- new --> Domain
-        Domain --> ProcInsert
-        Domain --> DomainWrite
-        Domain --> OutboxInsert
-
-        Poller --> Read --> Pub --> Mark
-    end
-
-    KafkaIn --> Consumer
-    Pub --> KafkaOut
+flowchart TD
+    A[Inbound message<br/>event_id, event_type] --> B{processed_events<br/>has event_id?}
+    B -- yes --> C[Return early<br/>log "skipping duplicate"]
+    B -- no --> D[Apply domain change]
+    D --> E[Insert processed_events row]
+    E --> F[Insert outbox row<br/>same TX]
+    F --> G[Commit]
 ```
 
-**Both blocks are independent transactions:**
-- **TX 1** writes the domain row + processed_events row + outbox row atomically. If any of these fails the whole thing rolls back — Kafka redelivers the command and we try again.
-- **TX 2** is the poller: read unsent rows, publish to Kafka, mark sent. If publish succeeds but the mark fails, we'll re-publish — that's why every receiver checks `processed_events` first.
+The check is the FIRST thing inside the transactional handler; the insert into `processed_events` happens in the same transaction as the domain work and the outbox row. Either everything commits or everything rolls back, and Kafka redelivery is harmless.
 
----
+## 5. Event envelope
 
-## 5. Conventions (all services must follow)
-
-### Event envelope
-
-Every Kafka message — command or event — uses this JSON shape:
+Every command and every event uses the same JSON envelope:
 
 ```json
 {
-  "event_id":   "uuid-v4",
-  "event_type": "PaymentApproved",
-  "saga_id":    "uuid-v4",
-  "occurred_at": "2026-05-05T12:34:56Z",
-  "payload":    { ... event-specific ... }
+  "event_id":    "uuid-v4",
+  "event_type":  "AccountDebited",
+  "saga_id":     "uuid-v4",
+  "occurred_at": "2026-05-10T12:34:56Z",
+  "payload":     { "...": "event-specific" }
 }
 ```
 
-- `event_id` — unique per emission, used for idempotency. Kafka redeliveries keep the same id.
-- `saga_id` — equals the order id. Lets every service correlate logs and the orchestrator track state.
-- `event_type` — string discriminator; consumers route on this.
-- `payload` — the actual business data.
+`saga_id` equals the transfer id. Lets every service correlate logs and the orchestrator track state.
 
-Use the **same JSON shape** in command topics and event topics — only `event_type` differs.
+## 6. Topic catalogue
 
-### Kafka topics
+| Topic                    | Producer            | Consumer            | Purpose                           |
+|--------------------------|---------------------|---------------------|-----------------------------------|
+| `account.commands`       | transfer-service    | account-service     | Debit / Credit / Refund commands  |
+| `account.events`         | account-service     | transfer-service    | Reply events from account         |
+| `fx.commands`            | transfer-service    | fx-service          | Convert / Reverse commands        |
+| `fx.events`              | fx-service          | transfer-service    | Reply events from fx              |
+| `notification.commands`  | transfer-service    | notification-service| Send notification command         |
+| `notification.events`    | notification-service| transfer-service    | Notification reply                |
+| `transfer.events`        | transfer-service    | (observability)     | State transitions for inspection  |
 
-| Topic                | Producer    | Consumers     |
-| -------------------- | ----------- | ------------- |
-| `payment-commands`   | order       | payment       |
-| `payment-events`     | payment     | order         |
-| `inventory-commands` | order       | inventory     |
-| `inventory-events`   | inventory   | order         |
-| `delivery-commands` | order       | delivery      |
-| `delivery-events`   | delivery    | order         |
+Topic names use **dot** separators (`<service>.<commands|events>`).
 
-Single partition per topic for the lab — keeps ordering simple. Auto-create enabled in dev compose.
+## 7. Standard tables (every service)
 
-### Standard tables (every service)
+Each service has its own database, but the schema for these two tables is identical across all four.
 
 ```sql
--- outbox: events not yet published to Kafka
 CREATE TABLE outbox (
-    id            BIGSERIAL PRIMARY KEY,
+    id            BIGSERIAL    PRIMARY KEY,
     event_id      UUID         NOT NULL UNIQUE,
-    aggregate_id  VARCHAR(64)  NOT NULL,        -- usually saga_id / order id
+    aggregate_id  VARCHAR(64)  NOT NULL,        -- usually saga_id / transfer id
     topic         VARCHAR(128) NOT NULL,
     event_type    VARCHAR(64)  NOT NULL,
     payload       JSONB        NOT NULL,
     created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
     published_at  TIMESTAMPTZ
 );
+
 CREATE INDEX outbox_unpublished_idx ON outbox (created_at) WHERE published_at IS NULL;
 
--- processed_events: idempotency log for inbound messages
 CREATE TABLE processed_events (
     event_id     UUID         PRIMARY KEY,
     event_type   VARCHAR(64)  NOT NULL,
@@ -247,86 +185,37 @@ CREATE TABLE processed_events (
 );
 ```
 
-Each service has its own database, but the schema for these two tables is identical across all four.
-
-### Saga states (order-service only)
+## 8. Saga states (transfer-service only)
 
 ```
-PENDING            → RequestPayment sent
-PAYMENT_REQUESTED  → waiting for PaymentApproved/Declined
-PAID               → ReserveStock sent
-STOCK_REQUESTED    → waiting for StockReserved/Failed
-RESERVED           → ScheduleDelivery sent
-DELIVERY_REQUESTED → waiting for DeliveryScheduled/Failed
-COMPLETED          → terminal success
-FAILED             → terminal failure
-COMPENSATING       → mid-rollback (sub-states optional)
+PENDING                 → DebitAccount sent
+DEBIT_REQUESTED         → waiting for AccountDebited / DebitRejected
+SENDER_DEBITED          → ConvertCurrency sent
+FX_REQUESTED            → waiting for CurrencyConverted / ConversionRejected
+FX_CONVERTED            → CreditAccount sent
+CREDIT_REQUESTED        → waiting for AccountCredited / CreditRejected
+RECIPIENT_CREDITED      → SendNotification sent
+NOTIFICATION_REQUESTED  → waiting for NotificationSent
+COMPLETED               → terminal success
+COMPENSATING            → mid-rollback (sub-states optional)
+FAILED                  → terminal failure
 ```
 
-### Service ports (host)
+## 9. Service ports
 
-| Service     | App port | DB port |
-| ----------- | -------- | ------- |
-| order       | 8080     | 5432    |
-| payment     | 8081     | 5433    |
-| inventory   | 8082     | 5434    |
-| delivery    | 8083     | 5435    |
+| Service                 | App port | DB port |
+| ----------------------- | -------- | ------- |
+| transfer-service        | 8080     | 5432    |
+| account-service         | 8081     | 5433    |
+| fx-service              | 8082     | 5434    |
+| notification-service    | 8083     | 5435    |
 
-Kafka exposed on `localhost:9092`.
+Kafka exposed on `localhost:9092` (through Toxiproxy).
 
-### No shared library
+## 10. No shared library
 
-Each service owns its own copy of event DTOs. This matches real-world microservices where services evolve schemas independently. Schema drift is acceptable — the JSON envelope is the contract.
+Each service owns its own copy of event DTOs and the envelope record. This matches real-world microservices where services evolve schemas independently. Schema drift is acceptable — the JSON envelope is the contract.
 
----
+## 11. Chaos topology
 
-## 6. Local stack & chaos topology
-
-The operational layer that lives alongside the four services in `docker-compose.yml`. Toxiproxy sits in front of Kafka so that failure injection is a one-liner, and Kafka UI gives a visual of topics, messages, and consumer lag.
-
-```mermaid
-flowchart LR
-    k6[k6 traffic-sim<br/>diurnal · burst · hotSku]
-    curl[curl / GET /orders/id]
-
-    subgraph hostside["Host (your laptop)"]
-        Order[order-service<br/>:8080]
-        Payment[payment-service<br/>:8081]
-        Inventory[inventory-service<br/>:8082]
-        Delivery[delivery-service<br/>:8083]
-    end
-
-    subgraph compose["docker compose network"]
-        Toxiproxy{{toxiproxy<br/>:9092 host<br/>:8474 admin}}
-        Kafka{{kafka<br/>internal :29092}}
-        KafkaUI[kafka-ui<br/>:8090]
-        Postgres[(orders / payments<br/>inventory / delivery DBs)]
-    end
-
-    chaos[tools/chaos.sh<br/>latency · down · clear]
-
-    k6 -->|POST /orders| Order
-    curl --> Order
-
-    Order  -->|kafka producer/consumer<br/>localhost:9092| Toxiproxy
-    Payment -->|same| Toxiproxy
-    Inventory -->|same| Toxiproxy
-    Delivery  -->|same| Toxiproxy
-
-    Toxiproxy -->|kafka:9092| Kafka
-    KafkaUI -->|kafka:29092<br/>direct, in-network| Kafka
-
-    Order  --> Postgres
-    Payment --> Postgres
-    Inventory --> Postgres
-    Delivery --> Postgres
-
-    chaos -.->|HTTP API :8474| Toxiproxy
-
-    classDef chaosClass fill:#ffe5e5,stroke:#cc4444
-    class chaos,Toxiproxy chaosClass
-```
-
-**Why toxiproxy is always in the host→Kafka path:** Kafka brokers send their own listener address to clients in metadata. If the proxy were optional and not advertised, clients would reconnect directly to Kafka after the first metadata refresh and bypass any toxics. Putting toxiproxy on `localhost:9092` (the address Kafka advertises for `PLAINTEXT_HOST`) means every reconnect comes back through the proxy, so chaos effects stick.
-
-**Default state**: zero toxics — proxy is fully transparent, near-zero added latency. Chaos is opt-in via `./tools/chaos.sh`.
+Toxiproxy sits between the host and Kafka. Default state: zero toxics — proxy is fully transparent, near-zero added latency. Chaos is opt-in via `./tools/chaos.sh`. The toxics that matter for studying redelivery and timeouts are: latency, jitter, slow_close, and bandwidth limits. Every saga path (happy + the three compensation paths) should be exercisable while toxics are active.
