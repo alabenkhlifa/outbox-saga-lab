@@ -73,76 +73,76 @@ services:
       kafka:
         condition: service_healthy
 
-  orders-db:
+  transfers-db:
     image: postgres:16-alpine
-    container_name: orders-db
+    container_name: transfers-db
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: orders
-      POSTGRES_USER: orders
-      POSTGRES_PASSWORD: orders
+      POSTGRES_DB: transfers
+      POSTGRES_USER: transfers
+      POSTGRES_PASSWORD: transfers
     volumes:
-      - orders-data:/var/lib/postgresql/data
+      - transfers-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "orders"]
+      test: ["CMD", "pg_isready", "-U", "transfers"]
       interval: 5s
       timeout: 3s
       retries: 10
 
-  payments-db:
+  accounts-db:
     image: postgres:16-alpine
-    container_name: payments-db
+    container_name: accounts-db
     ports:
       - "5433:5432"
     environment:
-      POSTGRES_DB: payments
-      POSTGRES_USER: payments
-      POSTGRES_PASSWORD: payments
+      POSTGRES_DB: accounts
+      POSTGRES_USER: accounts
+      POSTGRES_PASSWORD: accounts
     volumes:
-      - payments-data:/var/lib/postgresql/data
+      - accounts-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "payments"]
+      test: ["CMD", "pg_isready", "-U", "accounts"]
       interval: 5s
       timeout: 3s
       retries: 10
 
-  inventory-db:
+  fx-db:
     image: postgres:16-alpine
-    container_name: inventory-db
+    container_name: fx-db
     ports:
       - "5434:5432"
     environment:
-      POSTGRES_DB: inventory
-      POSTGRES_USER: inventory
-      POSTGRES_PASSWORD: inventory
+      POSTGRES_DB: fx
+      POSTGRES_USER: fx
+      POSTGRES_PASSWORD: fx
     volumes:
-      - inventory-data:/var/lib/postgresql/data
+      - fx-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "inventory"]
+      test: ["CMD", "pg_isready", "-U", "fx"]
       interval: 5s
       timeout: 3s
       retries: 10
 
-  delivery-db:
+  notifications-db:
     image: postgres:16-alpine
-    container_name: delivery-db
+    container_name: notifications-db
     ports:
       - "5435:5432"
     environment:
-      POSTGRES_DB: delivery
-      POSTGRES_USER: delivery
-      POSTGRES_PASSWORD: delivery
+      POSTGRES_DB: notifications
+      POSTGRES_USER: notifications
+      POSTGRES_PASSWORD: notifications
     volumes:
-      - delivery-data:/var/lib/postgresql/data
+      - notifications-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "delivery"]
+      test: ["CMD", "pg_isready", "-U", "notifications"]
       interval: 5s
       timeout: 3s
       retries: 10
 
 volumes:
-  orders-data:
-  payments-data:
-  inventory-data:
-  delivery-data:
+  transfers-data:
+  accounts-data:
+  fx-data:
+  notifications-data:

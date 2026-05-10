@@ -1,6 +1,6 @@
 # outbox-saga-lab
 
-Personal learning project — a small e-commerce food-ordering platform built end-to-end to strengthen hands-on knowledge of distributed-systems patterns. The goal is **understanding**, not production-readiness — code stays readable and the patterns must be visible at a glance.
+Personal learning project — a small Revolut-style banking backend built end-to-end to strengthen hands-on knowledge of distributed-systems patterns. The goal is **understanding**, not production-readiness — code stays readable and the patterns must be visible at a glance.
 
 The four implemented patterns:
 
@@ -10,6 +10,8 @@ The four implemented patterns:
 - **Idempotent consumers** for Kafka redelivery.
 
 When introducing or modifying a pattern, prefer the textbook implementation over a clever shortcut. Comments and naming should make the pattern obvious — this is study code.
+
+The core flow is a **cross-currency peer-to-peer money transfer**: debit the sender's wallet, FX-convert, credit the recipient's wallet, notify both parties. Every leg is reversible, exercising the compensation chain.
 
 ---
 
@@ -26,14 +28,14 @@ If both files seem relevant, `architecture.md` first (it's the contract), then `
 
 ## Services
 
-| Service     | Responsibility                              | Port |
-| ----------- | ------------------------------------------- | ---- |
-| `order`     | Saga orchestrator — owns order lifecycle    | 8080 |
-| `payment`   | Authorize / refund payment                  | 8081 |
-| `inventory` | Reserve / release stock                     | 8082 |
-| `delivery`  | Schedule / cancel delivery                  | 8083 |
+| Service                | Responsibility                                  | Port |
+| ---------------------- | ----------------------------------------------- | ---- |
+| `transfer-service`     | Saga orchestrator — owns the transfer lifecycle | 8080 |
+| `account-service`      | Wallets per (user, currency); debit/credit/refund | 8081 |
+| `fx-service`           | Currency conversion using a seeded rate table   | 8082 |
+| `notification-service` | Records sent notifications (no real push)       | 8083 |
 
-Order Service drives the saga. Payment, Inventory, and Delivery are participants and emit reply events. The full happy-path + compensation flows are in `docs/architecture.md` §2–§3.
+`transfer-service` drives the saga. `account-service`, `fx-service`, and `notification-service` are participants and emit reply events. The full happy-path + compensation flows are in `docs/architecture.md` §2–§3.
 
 ---
 
@@ -54,10 +56,10 @@ outbox-saga-lab/
 ├── docs/
 │   ├── architecture.md     # diagrams + conventions (the contract)
 │   └── operations.md       # running, traffic, chaos, debugging
-├── order-service/          # saga orchestrator
-├── payment-service/        # saga participant
-├── inventory-service/      # saga participant
-├── delivery-service/       # saga participant
+├── transfer-service/       # saga orchestrator
+├── account-service/        # saga participant — wallets
+├── fx-service/             # saga participant — currency conversion
+├── notification-service/   # saga participant — notifications
 ├── tools/
 │   ├── chaos.sh            # toxiproxy shortcuts
 │   └── toxiproxy/          # init config
