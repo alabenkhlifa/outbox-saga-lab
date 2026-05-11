@@ -83,6 +83,19 @@ Each service is independently runnable (`./gradlew bootRun`) with its own `appli
 - **Logging**: every published event, every consumed event, every saga state transition.
 - **No local `psql` / `kcat`.** Inspect Postgres via `docker exec -it <pg-container> psql ...` and Kafka via the broker's bundled scripts. Don't suggest installing host-side clients.
 
+## Learning sessions
+
+When walking the user through a distributed-systems pattern:
+
+- **Research real-world adoption** via WebSearch. Look at primary engineering content (Medium / company tech blogs, conference talks, named-engineer LinkedIn posts). Default references to probe: Revolut, Monzo, Wise, N26, Stripe, Uber, Netflix, DoorDash, Shopify, Slack.
+- **Produce a Notion-ready annex** when the search surfaces concrete numbers, named systems, or non-obvious design choices. Annex format: title + verification date, one-paragraph summary, ≥1 mermaid diagram, key facts (throughput / latency / persistence model / divergence from the textbook), why-non-obvious-choice (if any), interview talking points, sources as markdown hyperlinks. Wrap the annex in a fenced ````markdown` block so it copy-pastes into Notion cleanly.
+- **Mermaid for Notion**: Notion's mermaid renderer lags upstream — use pipe-style edge labels `-->|"label"|`, not `-- "label" -->`. Never use empty labels (`-- "" -->`); plain `-->` is correct. Inside `subgraph X["..."]`, avoid parentheses and special punctuation in the display name. Use plain text after `<br/>` instead of parenthesized qualifiers.
+- **Cite, don't speculate.** Label inferences as inferences. Skip the annex entirely if the search turns up nothing verifiable — don't fabricate numbers or pad.
+- **Live-observe over lecture.** Distributed-systems concepts are invisible without watching the seams. When a user is learning a pattern, set up DB watch terminals first, then trigger scenarios — never batch-dump multiple snapshots in one tool call where the user can't observe state changing live.
+- **Pre-action contract before every state-changing scenario** (transfers, compensations, chaos toggles, toxiproxy changes, traffic-sim). The pattern: (1) state in ONE sentence what you're about to do, (2) state in ONE sentence which terminal and which rows/columns the user should focus on, (3) WAIT for explicit approval. Don't proceed on assumed readiness, and don't batch multiple actions in one approval cycle — one action per cycle.
+- **macOS-friendly DB watch one-liners.** macOS `watch` (from `brew install watch`) breaks on `psql` invocations with multiple `-c` flags — the second-and-later flags get mis-parsed. Use one `-c` with semicolon-joined SQL: `watch -n 1 'docker exec <db> psql -U <u> -d <d> -c "SELECT ...; SELECT ...; SELECT ..."'`. To run two `docker exec` calls in one watch frame, chain them with `;` inside the single-quoted argument.
+- **Keep teaching answers short.** Lead with the answer in 1-3 sentences, then a tight table or 3-4 bullets max. No big "Notion-ready summary" blocks unless the user asks. No restating the question. If the user wants depth, they'll ask follow-ups.
+
 ## Out of scope (for now)
 
 - Auth / users.
